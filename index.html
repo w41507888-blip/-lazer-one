@@ -39,7 +39,7 @@ function resize() {
 window.addEventListener('resize', resize);
 resize();
 
-const groundY = () => H * 0.82;
+const groundY = () => Math.min(H * 0.82, H - 226 * U);
 
 /* ---------------- オーディオ ---------------- */
 let AC = null, muted = false, noiseBuf = null;
