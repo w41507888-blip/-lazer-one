@@ -164,9 +164,16 @@ function pointerMove(e) {
   if (p && p.role === 'stick') {
     const dx = e.clientX - Input.stick.ox, dy = e.clientY - Input.stick.oy;
     const len = Math.hypot(dx, dy), max = 52 * U;
-    const c = len > max ? max / len : 1;
-    Input.stick.dx = dx * c / max;
-    Input.stick.dy = dy * c / max;
+    // 原点を指に追従させる(フローティングスティック)。指がmaxを超えたら
+    // 原点を縁まで引き寄せるので、逆方向へ倒した瞬間に向きが反転する。
+    if (len > max) {
+      const k = (len - max) / len;
+      Input.stick.ox += dx * k;
+      Input.stick.oy += dy * k;
+    }
+    const rdx = e.clientX - Input.stick.ox, rdy = e.clientY - Input.stick.oy;
+    Input.stick.dx = rdx / max;
+    Input.stick.dy = rdy / max;
   }
 }
 function pointerUp(e) {
