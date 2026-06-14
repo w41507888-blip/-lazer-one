@@ -519,20 +519,23 @@ function banner(s, dur, col) {
   G.banners.push({ s, t: 0, dur, col });
 }
 
-/* 自動照準: 向いている側・約60度コーン内の最寄りの敵への角度 */
-function aimAngle(p) {
+/* 最寄り敵を探す。exclude を指定するとその敵を除外（2WAY用） */
+function findTarget(p, exclude) {
   const x0 = p.x, y0 = p.y - 34 * U;
-  let best = null, bd = Infinity;
+  let best = null, bd = Infinity, bestE = null;
   for (const e of G.enemies) {
+    if (e === exclude) continue;
     const ey = e.y - (e.type === 'boss' ? 0 : e.r);
     const dx = e.x - x0, dy = ey - y0;
     if (dx === 0 && dy === 0) continue;
     if (e.type !== 'boss' && Math.abs(dy) > Math.abs(dx) * 1.75) continue;
     const dist = dx * dx + dy * dy;
-    if (dist < bd) { bd = dist; best = Math.atan2(dy, dx); }
+    if (dist < bd) { bd = dist; best = Math.atan2(dy, dx); bestE = e; }
   }
-  return best;
+  return { angle: best, enemy: bestE };
 }
+function aimAngle(p) { return findTarget(p).angle; }
+
 
 /* ---------------- プレイヤー更新 ---------------- */
 function updatePlayer(dt) {
@@ -607,7 +610,7 @@ function updatePlayer(dt) {
     p.fireCd = d.fireRate;
     p.muzzle = 0.06;
     const by = p.y - 34 * U;
-    const a = aimAngle(p);
+    const { angle: a, enemy: t1 } = findTarget(p);
     const ang = a != null ? a : (p.face > 0 ? 0 : Math.PI);
     if (a != null) p.face = Math.cos(a) >= 0 ? 1 : -1;
     G.bullets.push({ x: p.x + Math.cos(ang) * 18 * U, y: by + Math.sin(ang) * 18 * U,
@@ -615,7 +618,9 @@ function updatePlayer(dt) {
                      r: d.bulletR * U, dmg: d.bulletDmg, pierce: d.pierce,
                      col: d.bulletCol, t: 0 });
     if (p.doubleShot) {
-      const ang2 = ang - Math.PI;
+      // 2番目に近い敵を探す。いなければ逆方向へ
+      const { angle: a2 } = findTarget(p, t1);
+      const ang2 = a2 != null ? a2 : ang + Math.PI;
       G.bullets.push({ x: p.x + Math.cos(ang2) * 18 * U, y: by + Math.sin(ang2) * 18 * U,
                        vx: Math.cos(ang2) * d.bulletSpd * U, vy: Math.sin(ang2) * d.bulletSpd * U,
                        r: d.bulletR * U, dmg: d.bulletDmg, pierce: d.pierce,
@@ -629,7 +634,12 @@ function updatePlayer(dt) {
   if (p.spT > 0 && d.id === 'lazer') {
     const by = p.y - 34 * U;
     let want = p.spAngle;
-    if (G.boss) want = Math.atan2(G.boss.y - by, G.boss.x - p.x);
+    if (G.boss) {
+      want = Math.atan2(G.boss.y - by, G.boss.x - p.x);
+    } else {
+      const la = aimAngle(p);
+      if (la != null) want = la;
+    }
     let diff = ((want - p.spAngle + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
     p.spAngle += diff * 6 * dt;
     p.face = Math.cos(p.spAngle) >= 0 ? 1 : -1;
