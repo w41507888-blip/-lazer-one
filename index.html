@@ -221,7 +221,7 @@ const G = {
   combo: 0, comboTimer: 0,
   char: null, player: null,
   bullets: [], ebullets: [], enemies: [], parts: [], texts: [], drops: [], ghosts: [],
-  banners: [], boss: null,
+  banners: [], boss: null, lastBossV: -1,
   selAnim: 0, overTimer: 0,
 };
 
@@ -274,6 +274,23 @@ function buildSpawnQueue() {
   return q;
 }
 
+/* ---------------- ボス種別 ---------------- */
+// 出現するたびに直前と違うボスを選ぶ。col=オーラ/弾色, core=本体色, shape=本体形状
+const BOSSES = [
+  { id: 'sentinel', name: 'センチネル', col: '#ff5577', core: '#3a2b46', shape: 'hex',
+    spd: 80, bob: 26, hpMul: 1.0 },
+  { id: 'spinner',  name: 'スピナー',   col: '#5fd0ff', core: '#1f3a52', shape: 'tri',
+    spd: 110, bob: 14, hpMul: 0.9 },
+  { id: 'reaper',   name: 'リーパー',   col: '#b06aff', core: '#2e1f46', shape: 'star',
+    spd: 60,  bob: 40, hpMul: 1.2 },
+];
+function pickBossVariant() {
+  let idx = Math.floor(Math.random() * BOSSES.length);
+  if (BOSSES.length > 1 && idx === G.lastBossV) idx = (idx + 1) % BOSSES.length;
+  G.lastBossV = idx;
+  return idx;
+}
+
 /* ---------------- 敵 ---------------- */
 function spawnEnemy(type) {
   const side = Math.random() < 0.5 ? -1 : 1;
@@ -300,12 +317,15 @@ function spawnEnemy(type) {
             hp: Math.ceil(4 * hpScale), spd: 70 * U, pts: 250,
             shootT: 1.5 + Math.random(), phase: Math.random() * 6 };
       break;
-    case 'boss':
+    case 'boss': {
+      const bv = pickBossVariant(), bdef = BOSSES[bv];
+      const bhp = Math.round((60 + tier * 35) * bdef.hpMul);
       e = { type, x: W / 2, y: -80 * U, vx: 0, vy: 0, r: 46 * U,
-            hp: 60 + tier * 35, maxHp: 60 + tier * 35, pts: 3000,
-            phase: 0, atkT: 2.5, dir: 1, entryT: 1.5 };
+            hp: bhp, maxHp: bhp, pts: 3000,
+            phase: 0, atkT: 2.5, dir: 1, entryT: 1.5, bv, bdef };
       G.boss = e;
       break;
+    }
   }
   e.t = 0; e.hurtT = 0;
   G.enemies.push(e);
@@ -369,37 +389,78 @@ function updateEnemy(e, dt) {
     case 'boss': {
       if (e.entryT > 0) { e.entryT -= dt; e.y += (H * 0.24 - e.y) * 2 * dt; break; }
       const enraged = e.hp < e.maxHp * 0.5;
-      e.x += e.dir * (enraged ? 130 : 80) * U * dt;
+      const bd = e.bdef || BOSSES[0];
+      const spd = (enraged ? bd.spd * 1.6 : bd.spd) * U;
+      e.x += e.dir * spd * dt;
       if (e.x < W * 0.2) e.dir = 1;
       if (e.x > W * 0.8) e.dir = -1;
-      e.y = H * 0.24 + Math.sin(e.t * 1.5) * 26 * U;
+      e.y = H * 0.24 + Math.sin(e.t * 1.5) * bd.bob * U;
       e.atkT -= dt;
       if (e.atkT <= 0) {
         e.atkT = enraged ? 1.4 : 2.2;
         e.phase = (e.phase + 1) % 3;
-        if (e.phase === 0) {                       // 放射弾
-          const n = enraged ? 14 : 10, off = e.t;
-          for (let i = 0; i < n; i++) {
-            const a = off + i / n * Math.PI * 2;
-            G.ebullets.push({ x: e.x, y: e.y, vx: Math.cos(a) * 200 * U, vy: Math.sin(a) * 200 * U, r: 6 * U });
-          }
-          SFX.shoot2();
-        } else if (e.phase === 1) {                // 狙い撃ち3連
-          const a = Math.atan2(p.y - 30 * U - e.y, p.x - e.x);
-          for (let i = -1; i <= 1; i++) {
-            const b = a + i * 0.22;
-            G.ebullets.push({ x: e.x, y: e.y, vx: Math.cos(b) * 320 * U, vy: Math.sin(b) * 320 * U, r: 6 * U });
-          }
-          SFX.shoot2();
-        } else if (G.enemies.length < 6) {         // 雑魚召喚
-          spawnEnemy('flyer'); spawnEnemy('flyer');
-        }
+        bossAttack(e, enraged, p);
       }
       break;
     }
   }
   // 画面内に押し戻し(地上系)
   if (e.type !== 'boss') e.x = Math.max(-60 * U, Math.min(W + 60 * U, e.x));
+}
+
+// 弾を1発撃つヘルパー
+function eshot(x, y, ang, spd, r) {
+  G.ebullets.push({ x, y, vx: Math.cos(ang) * spd * U, vy: Math.sin(ang) * spd * U, r: r * U });
+}
+// ボスの攻撃。種別(e.bv)ごとに3フェーズの弾幕が異なる
+function bossAttack(e, enraged, p) {
+  const aim = Math.atan2(p.y - 30 * U - e.y, p.x - e.x);
+  switch (e.bv) {
+    case 1: // スピナー: 回転する風車弾 / 高速狙い5連 / 二重リング
+      if (e.phase === 0) {
+        const n = enraged ? 16 : 12;
+        for (let i = 0; i < n; i++) eshot(e.x, e.y, e.t * 2.2 + i / n * Math.PI * 2, 230, 6);
+        SFX.shoot2();
+      } else if (e.phase === 1) {
+        for (let i = -2; i <= 2; i++) eshot(e.x, e.y, aim + i * 0.16, 380, 5);
+        SFX.shoot2();
+      } else {
+        const n = enraged ? 14 : 10;
+        for (let i = 0; i < n; i++) {
+          eshot(e.x, e.y, i / n * Math.PI * 2, 150, 7);
+          eshot(e.x, e.y, (i + 0.5) / n * Math.PI * 2, 240, 5);
+        }
+        SFX.shoot2();
+      }
+      break;
+    case 2: // リーパー: 広角ファン / 召喚2体 / 十字レーザー弾
+      if (e.phase === 0) {
+        const n = enraged ? 9 : 7, spread = 1.4;
+        for (let i = 0; i < n; i++) eshot(e.x, e.y, aim - spread / 2 + spread * i / (n - 1), 300, 6);
+        SFX.shoot2();
+      } else if (e.phase === 1) {
+        if (G.enemies.length < 7) { spawnEnemy('hopper'); spawnEnemy('walker'); }
+      } else {
+        const base = e.t;
+        for (let i = 0; i < 4; i++) {
+          eshot(e.x, e.y, base + i * Math.PI / 2, 280, 7);
+          if (enraged) eshot(e.x, e.y, base + i * Math.PI / 2 + Math.PI / 4, 280, 6);
+        }
+        SFX.shoot2();
+      }
+      break;
+    default: // センチネル(従来): 放射弾 / 狙い撃ち3連 / 雑魚召喚
+      if (e.phase === 0) {
+        const n = enraged ? 14 : 10;
+        for (let i = 0; i < n; i++) eshot(e.x, e.y, e.t + i / n * Math.PI * 2, 200, 6);
+        SFX.shoot2();
+      } else if (e.phase === 1) {
+        for (let i = -1; i <= 1; i++) eshot(e.x, e.y, aim + i * 0.22, 320, 6);
+        SFX.shoot2();
+      } else if (G.enemies.length < 6) {
+        spawnEnemy('flyer'); spawnEnemy('flyer');
+      }
+  }
 }
 
 function damageEnemy(e, dmg, hx, hy) {
@@ -1020,24 +1081,42 @@ function drawEnemy(e) {
       break;
     }
     case 'boss': {
+      const bd = e.bdef || BOSSES[0];
       const pulse = 1 + Math.sin(e.t * 4) * 0.03;
       ctx.rotate(e.t * 0.5);
-      ctx.strokeStyle = '#ff5577';
+      ctx.strokeStyle = bd.col;
       ctx.lineWidth = 5 * U;
       ctx.setLineDash([14 * U, 9 * U]);
       ctx.beginPath(); ctx.arc(0, 0, r * pulse, 0, 7); ctx.stroke();
       ctx.setLineDash([]);
       ctx.rotate(-e.t * 0.5);
-      ctx.fillStyle = '#3a2b46';
+      // 本体形状(変種ごと): hex=六角 / tri=三角(回転) / star=五芒星
+      ctx.fillStyle = bd.core;
       ctx.beginPath();
-      for (let i = 0; i < 6; i++) {
-        const a = i / 6 * Math.PI * 2 + e.t * 0.3;
-        const px = Math.cos(a) * r * 0.75, py = Math.sin(a) * r * 0.75;
-        i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+      if (bd.shape === 'tri') {
+        const sp = e.t * 1.2;
+        for (let i = 0; i < 3; i++) {
+          const a = i / 3 * Math.PI * 2 + sp;
+          const px = Math.cos(a) * r * 0.82, py = Math.sin(a) * r * 0.82;
+          i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+        }
+      } else if (bd.shape === 'star') {
+        for (let i = 0; i < 10; i++) {
+          const a = i / 10 * Math.PI * 2 - Math.PI / 2 + e.t * 0.2;
+          const rad = (i % 2 ? 0.4 : 0.85) * r;
+          const px = Math.cos(a) * rad, py = Math.sin(a) * rad;
+          i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+        }
+      } else {
+        for (let i = 0; i < 6; i++) {
+          const a = i / 6 * Math.PI * 2 + e.t * 0.3;
+          const px = Math.cos(a) * r * 0.75, py = Math.sin(a) * r * 0.75;
+          i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+        }
       }
       ctx.closePath(); ctx.fill();
       const en = e.hp < e.maxHp * 0.5;
-      ctx.fillStyle = en ? '#ff3a3a' : '#ff5577';
+      ctx.fillStyle = en ? '#ff3a3a' : bd.col;
       ctx.beginPath(); ctx.arc(0, 0, r * 0.32 * pulse, 0, 7); ctx.fill();
       ctx.fillStyle = '#fff';
       ctx.beginPath(); ctx.arc(-r * 0.08, -r * 0.1, r * 0.09, 0, 7); ctx.fill();
@@ -1142,15 +1221,16 @@ function drawHUD() {
 
   // ボスHPバー
   if (G.boss) {
+    const bd = G.boss.bdef || BOSSES[0];
     const bw = W * 0.6, bx = W / 2 - bw / 2, by = 38 * U;
     ctx.fillStyle = 'rgba(0,0,0,0.4)';
     roundRect(bx - 2, by - 2, bw + 4, 12 * U + 4, 6 * U); ctx.fill();
-    ctx.fillStyle = '#ff5577';
+    ctx.fillStyle = bd.col;
     roundRect(bx, by, bw * Math.max(0, G.boss.hp / G.boss.maxHp), 12 * U, 5 * U); ctx.fill();
     ctx.fillStyle = '#fff';
     ctx.font = `bold ${11 * U}px sans-serif`;
     ctx.textAlign = 'center';
-    ctx.fillText('— BOSS —', W / 2, by + 16 * U);
+    ctx.fillText('— ' + bd.name + ' —', W / 2, by + 16 * U);
   }
 
   // ポーズボタン
