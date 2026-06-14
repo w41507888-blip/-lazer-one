@@ -150,8 +150,8 @@ function pointerDown(e) {
       return;
     }
   }
-  // 左側 = バーチャルスティック
-  if (x < W * 0.48) {
+  // ボタン以外のどこに触れてもスティックとして登録（スティックは1本のみ有効）
+  if (Input.stick.id === -1) {
     pointers.set(e.pointerId, { role: 'stick' });
     Input.stick.id = e.pointerId;
     Input.stick.ox = x; Input.stick.oy = y;
