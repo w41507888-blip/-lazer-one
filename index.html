@@ -232,6 +232,7 @@ function newPlayer(def) {
     onGround: true, jumps: 0, fireCd: 0, inv: 0,
     dashT: 0, dashCd: 0, gauge: 0, spT: 0, spAngle: 0, muzzle: 0,
     runAmt: 0, anim: Math.random() * 10, hurtT: 0,
+    doubleShot: false, starT: 0,
   };
 }
 
@@ -427,7 +428,9 @@ function killEnemy(e) {
     G.flash = 0.5;
     banner('BOSS撃破!! +' + pts, 2, '#ffe87a');
   } else if (Math.random() < 0.1) {
-    G.drops.push({ x: e.x, y: e.y - 10 * U, vy: -200 * U, t: 0, kind: 'heart' });
+    const kinds = ['heart', 'double', 'star'];
+    const kind = kinds[Math.floor(Math.random() * kinds.length)];
+    G.drops.push({ x: e.x, y: e.y - 10 * U, vy: -200 * U, t: 0, kind });
   }
 }
 
@@ -480,6 +483,7 @@ function updatePlayer(dt) {
   p.dashCd = Math.max(0, p.dashCd - dt);
   p.muzzle = Math.max(0, p.muzzle - dt);
   p.spT = Math.max(0, p.spT - dt);
+  if (p.starT > 0) { p.starT -= dt; if (p.starT <= 0) { p.starT = 0; p.inv = 0; } }
 
   const ax = moveAxis();
   if (p.dashT > 0) {
@@ -549,6 +553,13 @@ function updatePlayer(dt) {
                      vx: Math.cos(ang) * d.bulletSpd * U, vy: Math.sin(ang) * d.bulletSpd * U,
                      r: d.bulletR * U, dmg: d.bulletDmg, pierce: d.pierce,
                      col: d.bulletCol, t: 0 });
+    if (p.doubleShot) {
+      const ang2 = ang - Math.PI;
+      G.bullets.push({ x: p.x + Math.cos(ang2) * 18 * U, y: by + Math.sin(ang2) * 18 * U,
+                       vx: Math.cos(ang2) * d.bulletSpd * U, vy: Math.sin(ang2) * d.bulletSpd * U,
+                       r: d.bulletR * U, dmg: d.bulletDmg, pierce: d.pierce,
+                       col: '#ffe87a', t: 0 });
+    }
     d.id === 'lazer' ? SFX.shoot() : SFX.shoot2();
     if (d.id === 'mirage') G.shake = Math.max(G.shake, 0.04);
   }
@@ -575,6 +586,7 @@ function updatePlayer(dt) {
 function hurtPlayer(dmg) {
   const p = G.player;
   if (p.inv > 0 || G.state !== 'play') return;
+  p.doubleShot = false;
   p.hp -= dmg;
   p.inv = 1.3; p.hurtT = 1.3;
   G.combo = 0;
@@ -693,9 +705,18 @@ function update(dt) {
     dd.y = Math.min(groundY() - 10 * U, dd.y + dd.vy * dt);
     if (Math.hypot(p.x - dd.x, py - dd.y) < pr + 14 * U) {
       G.drops.splice(G.drops.indexOf(dd), 1);
-      p.hp = Math.min(p.maxHp, p.hp + 1);
-      floatText('HP +1', dd.x, dd.y, '#ff90b0');
       SFX.pickup();
+      if (dd.kind === 'heart') {
+        p.hp = Math.min(p.maxHp, p.hp + 1);
+        floatText('HP +1', dd.x, dd.y, '#ff90b0');
+      } else if (dd.kind === 'double') {
+        p.doubleShot = true;
+        floatText('2WAY SHOT!', dd.x, dd.y, '#ffe87a');
+      } else if (dd.kind === 'star') {
+        p.starT = 10;
+        p.inv = Math.max(p.inv, 10);
+        floatText('INVINCIBLE!', dd.x, dd.y, '#ffdf00');
+      }
     } else if (dd.t > 8) G.drops.splice(G.drops.indexOf(dd), 1);
   }
 
@@ -1193,7 +1214,26 @@ function renderPlay() {
   // ドロップ
   for (const d of G.drops) {
     const bob2 = Math.sin(d.t * 5) * 3 * U;
-    drawHeart(d.x, d.y + bob2, 8 * U, '#ff5e7a');
+    if (d.kind === 'heart') {
+      drawHeart(d.x, d.y + bob2, 8 * U, '#ff5e7a');
+    } else if (d.kind === 'double') {
+      ctx.save();
+      ctx.translate(d.x, d.y + bob2);
+      ctx.fillStyle = '#ffe87a';
+      ctx.font = `bold ${14 * U}px monospace`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('2×', 0, 0);
+      ctx.restore();
+    } else if (d.kind === 'star') {
+      ctx.save();
+      ctx.translate(d.x, d.y + bob2);
+      const hue = (d.t * 120) % 360;
+      ctx.fillStyle = `hsl(${hue},100%,65%)`;
+      ctx.font = `bold ${14 * U}px monospace`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('★', 0, 0);
+      ctx.restore();
+    }
   }
 
   // 残像
@@ -1226,6 +1266,25 @@ function renderPlay() {
       face: p.face, t: p.anim, run: p.runAmt, air: !p.onGround,
       dash: p.dashT > 0, muzzle: p.muzzle > 0, hurt: p.inv > 0 && p.hurtT > 0,
     });
+    // スター無敵中はレインボーオーラを表示
+    if (p.starT > 0) {
+      const hue = (G.t * 180) % 360;
+      ctx.save();
+      ctx.globalAlpha = 0.35 + 0.15 * Math.sin(G.t * 12);
+      ctx.fillStyle = `hsl(${hue},100%,65%)`;
+      ctx.beginPath(); ctx.arc(p.x, p.y - 30 * U, 28 * U, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.restore();
+    }
+    // 2WAYショット中は頭上に小さなアイコン表示
+    if (p.doubleShot) {
+      ctx.save();
+      ctx.font = `bold ${10 * U}px monospace`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+      ctx.fillStyle = '#ffe87a';
+      ctx.fillText('2×', p.x, p.y - 58 * U);
+      ctx.restore();
+    }
   }
 
   // 弾
