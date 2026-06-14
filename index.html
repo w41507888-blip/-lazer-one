@@ -462,8 +462,7 @@ function aimAngle(p) {
   for (const e of G.enemies) {
     const ey = e.y - (e.type === 'boss' ? 0 : e.r);
     const dx = e.x - x0, dy = ey - y0;
-    if (dx * p.face <= 0) continue;
-    // ボスは大きいのでコーン制限なし(縦画面でも狙える)
+    if (dx === 0 && dy === 0) continue;
     if (e.type !== 'boss' && Math.abs(dy) > Math.abs(dx) * 1.75) continue;
     const dist = dx * dx + dy * dy;
     if (dist < bd) { bd = dist; best = Math.atan2(dy, dx); }
@@ -545,6 +544,7 @@ function updatePlayer(dt) {
     const by = p.y - 34 * U;
     const a = aimAngle(p);
     const ang = a != null ? a : (p.face > 0 ? 0 : Math.PI);
+    if (a != null) p.face = Math.cos(a) >= 0 ? 1 : -1;
     G.bullets.push({ x: p.x + Math.cos(ang) * 18 * U, y: by + Math.sin(ang) * 18 * U,
                      vx: Math.cos(ang) * d.bulletSpd * U, vy: Math.sin(ang) * d.bulletSpd * U,
                      r: d.bulletR * U, dmg: d.bulletDmg, pierce: d.pierce,
